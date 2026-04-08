@@ -100,8 +100,8 @@ class DraftAnalyzer:
             'status': self.get_status(pass_threshold),
             'pass_percentage': round(self.pass_percentage, 2),
             'fail_percentage': round(self.fail_percentage, 2),
-            'pass_pixels': self.green_pixels,
-            'fail_pixels': self.red_pixels,
-            'total_pixels': self.total_pixels,
+            'pass_pixels': int(self.green_pixels) if self.green_pixels is not None else 0,
+            'fail_pixels': int(self.red_pixels) if self.red_pixels is not None else 0,
+            'total_pixels': int(self.total_pixels) if self.total_pixels is not None else 0,
             'pass_threshold': pass_threshold
         }

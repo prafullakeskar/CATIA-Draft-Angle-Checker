@@ -9,6 +9,7 @@ This tool analyzes CATIA Draft Analysis screenshots (which use color coding: **g
 - Calculate pass/fail percentages
 - Generate automated validation reports
 - Support batch processing of CAD designs
+- Browse and upload images through a simple web interface
 
 ## Project Structure
 
@@ -40,7 +41,47 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Basic Usage
+### Web App Usage
+
+Start the web server:
+```bash
+python app.py
+```
+
+Open your browser and visit:
+```text
+http://localhost:5000
+```
+
+Upload a CATIA Draft Analysis image and the app will display:
+- `OK` when the draft passes the threshold
+- `NOT OK` when the draft fails the threshold
+
+### API Usage
+
+You can also analyze images programmatically using the `/api/analyze` endpoint:
+
+```bash
+curl -X POST -F "image=@path/to/image.png" -F "threshold=80" http://localhost:5000/api/analyze
+```
+
+Example JSON response:
+```json
+{
+  "ok": true,
+  "summary": {
+    "status": "PASS",
+    "pass_percentage": 92.5,
+    "fail_percentage": 7.5,
+    "pass_pixels": 185000,
+    "fail_pixels": 15000,
+    "total_pixels": 200000,
+    "pass_threshold": 80
+  }
+}
+```
+
+### Command-Line Usage
 
 Analyze a single image:
 ```bash
