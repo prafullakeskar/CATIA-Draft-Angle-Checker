@@ -1,4 +1,10 @@
-import cv2
+try:
+    import cv2
+except ImportError as exc:
+    raise ImportError(
+        'OpenCV is required. Install opencv-python-headless or opencv-python.'
+    ) from exc
+
 import numpy as np
 from pathlib import Path
 
@@ -31,18 +37,6 @@ class ImageProcessor:
 
         self.hsv_image = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2HSV)
 
-    def load_image(self):
-        """Load image from file."""
-        if not self.image_path.exists():
-            raise FileNotFoundError(f"Image not found: {self.image_path}")
-        
-        self.original_image = cv2.imread(str(self.image_path))
-        if self.original_image is None:
-            raise ValueError(f"Failed to load image: {self.image_path}")
-        
-        # Convert BGR to HSV for better color separation
-        self.hsv_image = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2HSV)
-    
     def load_image(self):
         """Load image from file."""
         if not self.image_path.exists():

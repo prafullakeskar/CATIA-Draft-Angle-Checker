@@ -43,7 +43,7 @@ pip install -r requirements.txt
 
 ### Web App Usage
 
-Start the web server:
+Start the Flask web server:
 ```bash
 python app.py
 ```
@@ -56,6 +56,15 @@ http://localhost:5000
 Upload a CATIA Draft Analysis image and the app will display:
 - `OK` when the draft passes the threshold
 - `NOT OK` when the draft fails the threshold
+
+### Streamlit App Usage
+
+Start the Streamlit app:
+```bash
+streamlit run streamlit_app.py
+```
+
+This provides a Streamlit-compatible interface for deployment on Streamlit Cloud.
 
 ### API Usage
 
