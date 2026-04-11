@@ -4,7 +4,7 @@ An automated computer vision tool for validating draft angles in CAD parts using
 
 ## Overview
 
-This tool analyzes CATIA Draft Analysis screenshots (which use color coding: **green for pass**, **red for fail**) to:
+This tool analyzes CATIA Draft Analysis screenshots (which use color coding: **green for pass**, **blue for fail**) to:
 - Detect and quantify failing draft angle regions
 - Calculate pass/fail percentages
 - Generate automated validation reports
@@ -118,7 +118,7 @@ python app.py path/to/image.png --output ./reports --format json
 ### Image Processing (`src/image_processor.py`)
 - Loads and preprocesses CAD draft analysis images
 - Converts BGR to HSV color space for robust color detection
-- Extracts red (fail) and green (pass) regions
+- Extracts blue (fail) and green (pass) regions
 - Applies morphological operations for noise reduction
 - Histogram analysis support
 
@@ -139,7 +139,7 @@ python app.py path/to/image.png --output ./reports --format json
 ## How It Works
 
 1. **Image Input**: Takes a 2D screenshot of CATIA Draft Analysis
-2. **Color Detection**: Identifies green (pass) and red (fail) regions using HSV color space
+2. **Color Detection**: Identifies green (pass) and blue (fail) regions using HSV color space
 3. **Pixel Analysis**: Counts passing and failing pixels
 4. **Calculation**: Computes pass/fail percentages
 5. **Report**: Generates detailed validation report
@@ -165,7 +165,7 @@ Pass Threshold: 80%
 PIXEL STATISTICS
 ------------------------------------------------------------
 Pass Pixels (Green): 185000
-Fail Pixels (Red): 15000
+Fail Pixels (Blue): 15000
 Total Pixels: 200000
 
 ------------------------------------------------------------
@@ -180,8 +180,8 @@ Total Pixels: 200000
 You can customize color detection parameters in `ImageProcessor`:
 
 ```python
-# Red threshold ranges (HSV)
-processor.extract_red_mask(lower_hue=0, upper_hue=10, ...)
+# Blue threshold ranges (HSV)
+processor.extract_blue_mask(lower_hue=90, upper_hue=130, ...)
 
 # Green threshold ranges (HSV)
 processor.extract_green_mask(lower_hue=40, upper_hue=80, ...)
@@ -216,7 +216,7 @@ summary = analyzer.get_analysis_summary()
 from src.image_processor import ImageProcessor
 
 processor = ImageProcessor('image.png')
-red_mask = processor.extract_red_mask()
+blue_mask = processor.extract_blue_mask()
 green_mask = processor.extract_green_mask()
 ```
 

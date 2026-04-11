@@ -32,7 +32,7 @@ if uploaded_file is not None:
         if status == 'PASS':
             st.success(f"OK — Draft angle passes with {summary['pass_percentage']:.2f}% green pixels.")
         else:
-            st.error(f"NOT OK — Draft angle fails with {summary['fail_percentage']:.2f}% red pixels.")
+            st.error(f"NOT OK — Draft angle fails with {summary['fail_percentage']:.2f}% blue pixels.")
 
         st.subheader('Analysis Summary')
         st.json(summary)

@@ -13,10 +13,10 @@ class DraftAnalyzer:
             image_path: Path to the CATIA draft analysis image
         """
         self.processor = ImageProcessor(image_path)
-        self.red_mask = None
+        self.blue_mask = None
         self.green_mask = None
         self.total_pixels = None
-        self.red_pixels = None
+        self.blue_pixels = None
         self.green_pixels = None
         self.pass_percentage = None
         self.fail_percentage = None
@@ -24,11 +24,11 @@ class DraftAnalyzer:
     def analyze(self):
         """Perform the draft angle analysis."""
         # Extract color masks
-        self.red_mask = self.processor.extract_red_mask()
+        self.blue_mask = self.processor.extract_blue_mask()
         self.green_mask = self.processor.extract_green_mask()
         
         # Apply morphological operations to clean up
-        self.red_mask = self.processor.apply_morphological_operations(self.red_mask)
+        self.blue_mask = self.processor.apply_morphological_operations(self.blue_mask)
         self.green_mask = self.processor.apply_morphological_operations(self.green_mask)
         
         # Calculate statistics
@@ -37,18 +37,18 @@ class DraftAnalyzer:
     def _calculate_statistics(self):
         """Calculate pass/fail percentages."""
         # Count non-zero pixels
-        self.red_pixels = np.count_nonzero(self.red_mask)
+        self.blue_pixels = np.count_nonzero(self.blue_mask)
         self.green_pixels = np.count_nonzero(self.green_mask)
         
-        # Total analyzed pixels (red + green)
-        self.total_pixels = self.red_pixels + self.green_pixels
+        # Total analyzed pixels (blue + green)
+        self.total_pixels = self.blue_pixels + self.green_pixels
         
         if self.total_pixels == 0:
             self.pass_percentage = 0
             self.fail_percentage = 0
         else:
             self.pass_percentage = (self.green_pixels / self.total_pixels) * 100
-            self.fail_percentage = (self.red_pixels / self.total_pixels) * 100
+            self.fail_percentage = (self.blue_pixels / self.total_pixels) * 100
     
     def get_pass_percentage(self):
         """Return the pass percentage."""
@@ -62,7 +62,7 @@ class DraftAnalyzer:
         """Return pixel count statistics."""
         return {
             'pass_pixels': self.green_pixels,
-            'fail_pixels': self.red_pixels,
+            'fail_pixels': self.blue_pixels,
             'total_pixels': self.total_pixels
         }
     
@@ -81,9 +81,9 @@ class DraftAnalyzer:
         
         return 'PASS' if self.pass_percentage >= pass_threshold else 'FAIL'
     
-    def get_red_mask(self):
-        """Return the red mask."""
-        return self.red_mask
+    def get_blue_mask(self):
+        """Return the blue mask."""
+        return self.blue_mask
     
     def get_green_mask(self):
         """Return the green mask."""
@@ -101,7 +101,7 @@ class DraftAnalyzer:
             'pass_percentage': round(self.pass_percentage, 2),
             'fail_percentage': round(self.fail_percentage, 2),
             'pass_pixels': int(self.green_pixels) if self.green_pixels is not None else 0,
-            'fail_pixels': int(self.red_pixels) if self.red_pixels is not None else 0,
+            'fail_pixels': int(self.blue_pixels) if self.blue_pixels is not None else 0,
             'total_pixels': int(self.total_pixels) if self.total_pixels is not None else 0,
             'pass_threshold': pass_threshold
         }

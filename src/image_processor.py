@@ -93,6 +93,29 @@ class ImageProcessor:
         
         return cv2.bitwise_or(mask, mask2)
     
+    def extract_blue_mask(self, lower_hue=90, upper_hue=130, lower_sat=100, upper_sat=255,
+                          lower_val=100, upper_val=255):
+        """
+        Extract blue regions from the image.
+        
+        Args:
+            lower_hue: Lower hue threshold for blue
+            upper_hue: Upper hue threshold for blue
+            lower_sat: Lower saturation threshold
+            upper_sat: Upper saturation threshold
+            lower_val: Lower value threshold
+            upper_val: Upper value threshold
+        
+        Returns:
+            Binary mask of blue regions
+        """
+        if self.hsv_image is None:
+            raise ValueError("HSV image not available")
+        
+        lower = np.array([lower_hue, lower_sat, lower_val])
+        upper = np.array([upper_hue, upper_sat, upper_val])
+        return cv2.inRange(self.hsv_image, lower, upper)
+    
     def extract_green_mask(self, lower_hue=40, upper_hue=80, lower_sat=100, upper_sat=255,
                            lower_val=100, upper_val=255):
         """

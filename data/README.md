@@ -6,7 +6,7 @@ Add your CATIA Draft Analysis screenshots here:
 
 These images should be 2D screenshots from CATIA with color-coded regions:
 - **Green regions**: Pass (acceptable draft angle)
-- **Red regions**: Fail (draft angle issues)
+- **Blue regions**: Fail (draft angle issues)
 
 ## How to Use Sample Data
 
