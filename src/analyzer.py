@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 from src.image_processor import ImageProcessor
 
 
@@ -23,13 +24,21 @@ class DraftAnalyzer:
     
     def analyze(self):
         """Perform the draft angle analysis."""
-        # Extract color masks
+        # Extract masks
         self.blue_mask = self.processor.extract_blue_mask()
         self.green_mask = self.processor.extract_green_mask()
-        
-        # Apply morphological operations to clean up
+
+        # Apply morphological cleanup
         self.blue_mask = self.processor.apply_morphological_operations(self.blue_mask)
         self.green_mask = self.processor.apply_morphological_operations(self.green_mask)
+
+        # --- ROI MASK ---
+        roi_mask = self.processor.get_roi_mask()
+
+        if roi_mask is not None:
+            # Apply ROI to both masks
+            self.blue_mask = cv2.bitwise_and(self.blue_mask, self.blue_mask, mask=roi_mask)
+            self.green_mask = cv2.bitwise_and(self.green_mask, self.green_mask, mask=roi_mask)
         
         # Calculate statistics
         self._calculate_statistics()
@@ -105,3 +114,14 @@ class DraftAnalyzer:
             'total_pixels': int(self.total_pixels) if self.total_pixels is not None else 0,
             'pass_threshold': pass_threshold
         }
+
+    def get_overlay_image(self):
+        """
+        Highlight fail regions inside ROI.
+        """
+        image = self.processor.get_original_image().copy()
+
+        # Highlight blue (fail) regions
+        image[self.blue_mask > 0] = [0, 0, 255]
+
+        return image

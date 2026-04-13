@@ -1,5 +1,7 @@
 import argparse
 import sys
+import base64
+import cv2
 from pathlib import Path
 from flask import Flask, request, render_template_string, jsonify
 from src.analyzer import DraftAnalyzer
@@ -44,6 +46,12 @@ UPLOAD_PAGE = '''
           <br>
           Pass: {{ summary.pass_percentage }}% | Fail: {{ summary.fail_percentage }}%
         </div>
+        {% if overlay %}
+        <div class="overlay">
+          <h3>Analysis Overlay</h3>
+          <img src="data:image/png;base64,{{ overlay }}" alt="Analysis Overlay" style="max-width: 100%; height: auto;">
+        </div>
+        {% endif %}
       {% endif %}
 
       <form method="post" enctype="multipart/form-data">
@@ -69,7 +77,11 @@ UPLOAD_PAGE = '''
 def analyze_image_bytes(image_bytes, pass_threshold=80):
     analyzer = DraftAnalyzer(image_bytes)
     analyzer.analyze()
-    return analyzer.get_analysis_summary(pass_threshold=pass_threshold)
+    overlay = analyzer.get_overlay_image()
+    _, buffer = cv2.imencode('.png', overlay)
+    overlay_b64 = base64.b64encode(buffer).decode('utf-8')
+    summary = analyzer.get_analysis_summary(pass_threshold=pass_threshold)
+    return summary, overlay_b64
 
 
 def build_flask_app():
@@ -80,6 +92,7 @@ def build_flask_app():
         error = None
         summary = None
         status_text = None
+        overlay = None
 
         if request.method == 'POST':
             uploaded_file = request.files.get('image')
@@ -93,12 +106,12 @@ def build_flask_app():
 
                 try:
                     image_bytes = uploaded_file.read()
-                    summary = analyze_image_bytes(image_bytes, pass_threshold=threshold)
+                    summary, overlay = analyze_image_bytes(image_bytes, pass_threshold=threshold)
                     status_text = 'OK' if summary['status'] == 'PASS' else 'NOT OK'
                 except Exception as exc:
                     error = str(exc)
 
-        return render_template_string(UPLOAD_PAGE, error=error, summary=summary, status_text=status_text)
+        return render_template_string(UPLOAD_PAGE, error=error, summary=summary, status_text=status_text, overlay=overlay)
 
     @app.route('/api/analyze', methods=['POST'])
     def api_analyze():
@@ -115,10 +128,11 @@ def build_flask_app():
             threshold = 80
 
         try:
-            summary = analyze_image_bytes(uploaded_file.read(), pass_threshold=threshold)
+            summary, overlay = analyze_image_bytes(uploaded_file.read(), pass_threshold=threshold)
             return jsonify({
                 'ok': summary['status'] == 'PASS',
-                'summary': summary
+                'summary': summary,
+                'overlay': overlay
             })
         except Exception as exc:
             return jsonify({'error': str(exc)}), 500

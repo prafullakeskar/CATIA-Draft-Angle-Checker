@@ -160,3 +160,33 @@ class ImageProcessor:
         hist = cv2.calcHist([self.original_image], [0, 1, 2], None, [256, 256, 256],
                             [0, 256, 0, 256, 0, 256])
         return hist
+    
+    def get_roi_mask(self):
+        """
+        Detect ROI (doghouse region) using white boundary detection.
+        
+        Returns:
+            Binary mask of ROI
+        """
+        if self.original_image is None:
+            raise ValueError("Image not loaded")
+
+        # Convert to grayscale
+        gray = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2GRAY)
+
+        # Threshold to detect white dashed boundary
+        _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+
+        # Find contours
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if not contours:
+            return None
+
+        # Largest contour = ROI
+        largest = max(contours, key=cv2.contourArea)
+
+        mask = np.zeros_like(gray)
+        cv2.drawContours(mask, [largest], -1, 255, thickness=-1)
+
+        return mask
