@@ -63,8 +63,8 @@ class ImageProcessor:
             return None
         return self.original_image.shape
     
-    def extract_red_mask(self, lower_hue=0, upper_hue=10, lower_sat=100, upper_sat=255, 
-                         lower_val=100, upper_val=255):
+    def extract_red_mask(self, lower_hue=0, upper_hue=12, lower_sat=60, upper_sat=255,
+                         lower_val=40, upper_val=255):
         """
         Extract red regions from the image.
         
@@ -87,14 +87,14 @@ class ImageProcessor:
         mask = cv2.inRange(self.hsv_image, lower, upper)
         
         # Also check for red in the upper hue range (170-180)
-        lower2 = np.array([170, lower_sat, lower_val])
+        lower2 = np.array([168, lower_sat, lower_val])
         upper2 = np.array([180, upper_sat, upper_val])
         mask2 = cv2.inRange(self.hsv_image, lower2, upper2)
         
         return cv2.bitwise_or(mask, mask2)
     
-    def extract_blue_mask(self, lower_hue=90, upper_hue=130, lower_sat=100, upper_sat=255,
-                          lower_val=100, upper_val=255):
+    def extract_blue_mask(self, lower_hue=90, upper_hue=135, lower_sat=60, upper_sat=255,
+                          lower_val=40, upper_val=255):
         """
         Extract blue regions from the image.
         
@@ -116,8 +116,8 @@ class ImageProcessor:
         upper = np.array([upper_hue, upper_sat, upper_val])
         return cv2.inRange(self.hsv_image, lower, upper)
     
-    def extract_green_mask(self, lower_hue=40, upper_hue=80, lower_sat=100, upper_sat=255,
-                           lower_val=100, upper_val=255):
+    def extract_green_mask(self, lower_hue=35, upper_hue=90, lower_sat=50, upper_sat=255,
+                           lower_val=35, upper_val=255):
         """
         Extract green regions from the image.
         
@@ -135,6 +135,22 @@ class ImageProcessor:
         if self.hsv_image is None:
             raise ValueError("HSV image not available")
         
+        lower = np.array([lower_hue, lower_sat, lower_val])
+        upper = np.array([upper_hue, upper_sat, upper_val])
+        return cv2.inRange(self.hsv_image, lower, upper)
+
+    def extract_yellow_mask(self, lower_hue=15, upper_hue=40, lower_sat=80, upper_sat=255,
+                            lower_val=120, upper_val=255):
+        """
+        Extract yellow ROI boundary regions from the image.
+
+        CATIA draft analysis often shows the selected/ROI boundary as a dashed
+        yellow line. The saturation/value thresholds are intentionally a little
+        loose because CATIA anti-aliases selection lines against the model.
+        """
+        if self.hsv_image is None:
+            raise ValueError("HSV image not available")
+
         lower = np.array([lower_hue, lower_sat, lower_val])
         upper = np.array([upper_hue, upper_sat, upper_val])
         return cv2.inRange(self.hsv_image, lower, upper)
@@ -161,9 +177,104 @@ class ImageProcessor:
                             [0, 256, 0, 256, 0, 256])
         return hist
     
+    def _fill_largest_boundary(self, boundary_mask, min_area_ratio=0.005):
+        """Fill the largest boundary-like contour if it is large enough."""
+        image_area = boundary_mask.shape[0] * boundary_mask.shape[1]
+        contours, _ = cv2.findContours(boundary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = [contour for contour in contours if cv2.contourArea(contour) >= image_area * min_area_ratio]
+        if not contours:
+            return None
+
+        largest = max(contours, key=cv2.contourArea)
+        mask = np.zeros_like(boundary_mask)
+        cv2.drawContours(mask, [largest], -1, 255, thickness=-1)
+        return mask
+
+    def _get_yellow_roi_mask(self):
+        """Detect ROI enclosed by CATIA's dashed yellow boundary line."""
+        yellow_mask = self.extract_yellow_mask()
+        if np.count_nonzero(yellow_mask) < 25:
+            return None
+
+        # Bridge dash gaps and slightly thicken anti-aliased boundary pixels.
+        close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31))
+        dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        boundary_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_CLOSE, close_kernel, iterations=2)
+        boundary_mask = cv2.dilate(boundary_mask, dilate_kernel, iterations=1)
+
+        roi_mask = self._fill_best_yellow_component(boundary_mask)
+        if roi_mask is not None:
+            return roi_mask
+
+        # If the dashed line has gaps too large to become a closed contour,
+        # use the convex hull of the yellow boundary pixels as a practical ROI.
+        points = cv2.findNonZero(boundary_mask)
+        if points is None or len(points) < 10:
+            return None
+
+        hull = cv2.convexHull(points)
+        hull_area = cv2.contourArea(hull)
+        image_area = boundary_mask.shape[0] * boundary_mask.shape[1]
+        if hull_area < image_area * 0.005:
+            return None
+
+        mask = np.zeros_like(boundary_mask)
+        cv2.drawContours(mask, [hull], -1, 255, thickness=-1)
+        return mask
+
+    def _fill_best_yellow_component(self, boundary_mask):
+        """Fill the best connected yellow boundary component as the ROI."""
+        image_area = boundary_mask.shape[0] * boundary_mask.shape[1]
+        component_count, labels, stats, _ = cv2.connectedComponentsWithStats(boundary_mask, connectivity=8)
+        candidates = []
+
+        for label in range(1, component_count):
+            pixel_area = stats[label, cv2.CC_STAT_AREA]
+            width = stats[label, cv2.CC_STAT_WIDTH]
+            height = stats[label, cv2.CC_STAT_HEIGHT]
+
+            if pixel_area < 25 or width < 8 or height < 8:
+                continue
+
+            component_mask = np.uint8(labels == label) * 255
+            points = cv2.findNonZero(component_mask)
+            if points is None or len(points) < 10:
+                continue
+
+            hull = cv2.convexHull(points)
+            hull_area = cv2.contourArea(hull)
+            if hull_area < image_area * 0.0005 or hull_area > image_area * 0.6:
+                continue
+
+            # Prefer broad enclosed selection boundaries over tiny dashed axes,
+            # text fragments, or long status-bar highlights.
+            fill_ratio = pixel_area / max(hull_area, 1)
+            aspect_ratio = width / max(height, 1)
+            if fill_ratio > 0.75 or aspect_ratio > 12 or aspect_ratio < 0.08:
+                continue
+
+            candidates.append((hull_area, pixel_area, hull))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        mask = np.zeros_like(boundary_mask)
+        cv2.drawContours(mask, [candidates[0][2]], -1, 255, thickness=-1)
+        return mask
+
+    def _get_white_roi_mask(self):
+        """Detect ROI using the previous white boundary behavior."""
+        gray = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2GRAY)
+        _, boundary_mask = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+        return self._fill_largest_boundary(boundary_mask)
+
     def get_roi_mask(self):
         """
-        Detect ROI (doghouse region) using white boundary detection.
+        Detect ROI from the selected CATIA analysis boundary.
+
+        Yellow dashed selection lines are preferred. White boundary detection is
+        retained as a fallback for older screenshots.
         
         Returns:
             Binary mask of ROI
@@ -171,22 +282,7 @@ class ImageProcessor:
         if self.original_image is None:
             raise ValueError("Image not loaded")
 
-        # Convert to grayscale
-        gray = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2GRAY)
-
-        # Threshold to detect white dashed boundary
-        _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-
-        # Find contours
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        if not contours:
-            return None
-
-        # Largest contour = ROI
-        largest = max(contours, key=cv2.contourArea)
-
-        mask = np.zeros_like(gray)
-        cv2.drawContours(mask, [largest], -1, 255, thickness=-1)
-
-        return mask
+        yellow_roi = self._get_yellow_roi_mask()
+        if yellow_roi is not None:
+            return yellow_roi
+        return self._get_white_roi_mask()

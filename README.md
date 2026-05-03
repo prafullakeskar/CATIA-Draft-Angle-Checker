@@ -4,12 +4,15 @@ An automated computer vision tool for validating draft angles in CAD parts using
 
 ## Overview
 
-This tool analyzes CATIA Draft Analysis screenshots (which use color coding: **green for pass**, **blue for fail**) to:
-- Detect and quantify failing draft angle regions
+This tool analyzes CATIA Draft Analysis screenshots (which use color coding: **green for pass**, **blue/red for fail**) to:
+- Detect and quantify failing draft angle regions in blue or red
+- Highlight NOK regions in the overlay image
+- Show ROI coverage diagnostics to catch poor captures or color detection misses
 - Calculate pass/fail percentages
 - Generate automated validation reports
 - Support batch processing of CAD designs
 - Browse and upload images through a simple web interface
+- Run as a local Windows desktop app connected to an active CATIA session
 
 ## Project Structure
 
@@ -21,8 +24,10 @@ draft-angle-checker/
 ├── src/
 │   ├── image_processor.py   # Image loading and preprocessing
 │   ├── analyzer.py          # Draft analysis logic
+│   ├── catia_integration.py # CATIA COM/window capture helpers
 │   └── report.py            # Report generation
 ├── app.py                   # Main application entry point
+├── desktop_app.py           # Local Windows desktop app
 ├── requirements.txt         # Python dependencies
 └── README.md               # This file
 ```
@@ -56,6 +61,22 @@ http://localhost:5000
 Upload a CATIA Draft Analysis image and the app will display:
 - `OK` when the draft passes the threshold
 - `NOT OK` when the draft fails the threshold
+
+### Local Desktop App for CATIA
+
+Start CATIA, open the model, and run CATIA Draft Analysis so the visible model is color-coded
+green/blue. Then launch the desktop app:
+
+```bash
+python desktop_app.py
+```
+
+Use **Analyze CATIA Window** to capture the running CATIA session directly, or **Open Image**
+to analyze an exported/saved screenshot. The desktop app can also save a text report, JSON
+report, and overlay image to a selected folder.
+
+CATIA desktop integration uses Windows COM automation through `pywin32`, so it must be run on
+Windows with CATIA already open.
 
 ### Streamlit App Usage
 
@@ -120,14 +141,15 @@ python app.py path/to/image.png --output ./reports --format json
 - Converts BGR to HSV color space for robust color detection
 - Extracts blue (fail) and green (pass) regions
 - Applies morphological operations for noise reduction
+- Limits analysis to the ROI enclosed by CATIA's dashed yellow boundary when present
 - Histogram analysis support
 
 ### Analysis Engine (`src/analyzer.py`)
-- Detects color-coded regions (pass/fail)
+- Detects color-coded regions (green pass, blue/red fail)
 - Calculates pass/fail percentages based on pixel counts
 - Configurable pass threshold (default: 80%)
 - Provides detailed pixel statistics
-- Binary mask extraction for visualization
+- Highlights NOK regions with red tint and yellow contours for visualization
 
 ### Report Generation (`src/report.py`)
 - Text-formatted reports with detailed statistics
@@ -139,7 +161,7 @@ python app.py path/to/image.png --output ./reports --format json
 ## How It Works
 
 1. **Image Input**: Takes a 2D screenshot of CATIA Draft Analysis
-2. **Color Detection**: Identifies green (pass) and blue (fail) regions using HSV color space
+2. **Color Detection**: Identifies green (pass) and blue/red (fail) regions using HSV color space
 3. **Pixel Analysis**: Counts passing and failing pixels
 4. **Calculation**: Computes pass/fail percentages
 5. **Report**: Generates detailed validation report
@@ -239,7 +261,7 @@ report.save_json_report('output.json')
 ## Future Enhancements
 
 - CNN-based classification for more complex scenarios
-- Real-time CATIA integration
+- Geometry-native CATIA draft analysis integration
 - Batch processing capabilities
 - Web UI for result visualization
 - Multi-part assembly analysis

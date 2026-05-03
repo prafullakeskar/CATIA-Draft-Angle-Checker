@@ -41,7 +41,17 @@ class Report:
         report.append("PIXEL STATISTICS")
         report.append("-" * 60)
         report.append(f"Pass Pixels (Green): {self.analysis_summary['pass_pixels']}")
-        report.append(f"Fail Pixels (Red): {self.analysis_summary['fail_pixels']}")
+        report.append(f"Fail Pixels (Red/Blue): {self.analysis_summary['fail_pixels']}")
+        if 'red_fail_pixels' in self.analysis_summary:
+            report.append(f"  Red Fail Pixels: {self.analysis_summary['red_fail_pixels']}")
+        if 'blue_fail_pixels' in self.analysis_summary:
+            report.append(f"  Blue Fail Pixels: {self.analysis_summary['blue_fail_pixels']}")
+        if 'nok_region_count' in self.analysis_summary:
+            report.append(f"NOK Regions Highlighted: {self.analysis_summary['nok_region_count']}")
+        if 'roi_pixels' in self.analysis_summary:
+            report.append(f"ROI Pixels: {self.analysis_summary['roi_pixels']}")
+        if 'analyzed_roi_coverage' in self.analysis_summary:
+            report.append(f"Analyzed ROI Coverage: {self.analysis_summary['analyzed_roi_coverage']:.2f}%")
         report.append(f"Total Pixels: {self.analysis_summary['total_pixels']}")
         
         report.append("\n" + "-" * 60)
