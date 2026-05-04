@@ -55,7 +55,7 @@ class DraftAngleDesktopApp(tk.Tk):
         self.save_button.pack(side=tk.RIGHT)
 
         self.status_var = tk.StringVar(value="Open CATIA Draft Analysis or choose an image to begin.")
-        self.status_label = ttk.Label(root, textvariable=self.status_var, font=("Segoe UI", 12, "bold"))
+        self.status_label = ttk.Label(root, textvariable=self.status_var, font=("Segoe UI", 24, "bold"))
         self.status_label.pack(fill=tk.X, pady=(8, 4))
 
         self.detail_var = tk.StringVar(value="")
@@ -166,15 +166,11 @@ class DraftAngleDesktopApp(tk.Tk):
 
     def _show_summary(self):
         status = self.summary["status"]
-        source = self.source_label or "Current analysis"
-        ok_text = "OK" if status == "PASS" else "NOT OK"
-        self.status_var.set(f"{ok_text} - {source}")
-        self.detail_var.set(
-            f"Pass: {self.summary['pass_percentage']:.2f}% | "
-            f"Fail: {self.summary['fail_percentage']:.2f}% | "
-            f"Coverage: {self.summary.get('analyzed_roi_coverage', 0):.2f}% | "
-            f"Threshold: {self.summary['pass_threshold']}%"
-        )
+        ok_text = "OK" if status == "PASS" else "NOK"
+        status_color = "#15803d" if status == "PASS" else "#dc2626"
+        self.status_var.set(ok_text)
+        self.status_label.configure(foreground=status_color)
+        self.detail_var.set("")
 
         self.summary_text.configure(state=tk.NORMAL)
         self.summary_text.delete("1.0", tk.END)
@@ -205,11 +201,14 @@ class DraftAngleDesktopApp(tk.Tk):
 
     def _set_busy(self, message):
         self.status_var.set(message)
+        self.status_label.configure(foreground="#111827")
+        self.detail_var.set("")
         self.save_button.configure(state=tk.DISABLED)
 
     def _set_ready(self):
         if not self.summary:
             self.status_var.set("Open CATIA Draft Analysis or choose an image to begin.")
+            self.status_label.configure(foreground="#111827")
 
 
 def main():
