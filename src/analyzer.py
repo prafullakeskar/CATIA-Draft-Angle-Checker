@@ -6,7 +6,7 @@ from src.image_processor import ImageProcessor
 class DraftAnalyzer:
     """Analyzes draft angle from CATIA draft analysis images."""
     
-    def __init__(self, image_path):
+    def __init__(self, image_path, use_roi=True, use_graphics_viewport=False):
         """
         Initialize the analyzer with an image.
         
@@ -14,9 +14,12 @@ class DraftAnalyzer:
             image_path: Path to the CATIA draft analysis image
         """
         self.processor = ImageProcessor(image_path)
+        self.use_roi = use_roi
+        self.use_graphics_viewport = use_graphics_viewport
         self.blue_mask = None
         self.red_mask = None
         self.fail_mask = None
+        self.visual_fail_mask = None
         self.green_mask = None
         self.roi_mask = None
         self.roi_pixels = None
@@ -42,9 +45,10 @@ class DraftAnalyzer:
         self.green_mask = self.processor.apply_morphological_operations(self.green_mask)
 
         self.fail_mask = cv2.bitwise_or(self.blue_mask, self.red_mask)
+        self.visual_fail_mask = self.fail_mask.copy()
 
         # --- ROI MASK ---
-        self.roi_mask = self.processor.get_roi_mask()
+        self.roi_mask = self._get_analysis_mask()
 
         if self.roi_mask is not None:
             # Apply ROI to both masks
@@ -52,6 +56,12 @@ class DraftAnalyzer:
             self.red_mask = cv2.bitwise_and(self.red_mask, self.red_mask, mask=self.roi_mask)
             self.fail_mask = cv2.bitwise_and(self.fail_mask, self.fail_mask, mask=self.roi_mask)
             self.green_mask = cv2.bitwise_and(self.green_mask, self.green_mask, mask=self.roi_mask)
+            if self.use_graphics_viewport:
+                self.visual_fail_mask = cv2.bitwise_and(
+                    self.visual_fail_mask,
+                    self.visual_fail_mask,
+                    mask=self.roi_mask,
+                )
         
         # Calculate statistics
         self._calculate_statistics()
@@ -114,8 +124,10 @@ class DraftAnalyzer:
         if self.fail_mask is None:
             return 0
 
-        contours, _ = cv2.findContours(self.fail_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        min_area = max(8, int(self.fail_mask.shape[0] * self.fail_mask.shape[1] * 0.00002))
+        highlight_mask = self.visual_fail_mask if self.visual_fail_mask is not None else self.fail_mask
+
+        contours, _ = cv2.findContours(highlight_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        min_area = max(8, int(highlight_mask.shape[0] * highlight_mask.shape[1] * 0.00002))
         return sum(1 for contour in contours if cv2.contourArea(contour) >= min_area)
     
     def get_blue_mask(self):
@@ -162,6 +174,14 @@ class DraftAnalyzer:
             return 0.0
         return float(round((self.total_pixels / self.roi_pixels) * 100, 2))
 
+    def _get_analysis_mask(self):
+        """Return the mask used to limit the pass/fail calculation."""
+        if self.use_graphics_viewport:
+            return self.processor.get_graphics_viewport_mask()
+        if self.use_roi:
+            return self.processor.get_roi_mask()
+        return None
+
     def get_overlay_image(self):
         """
         Highlight NOK regions inside ROI.
@@ -173,12 +193,13 @@ class DraftAnalyzer:
 
         # Tint all fail pixels red, then add a bright contour so small NOK
         # regions stay visible on CATIA's colored draft-analysis surface.
+        highlight_mask = self.visual_fail_mask if self.visual_fail_mask is not None else self.fail_mask
         red_overlay = image.copy()
-        red_overlay[self.fail_mask > 0] = [0, 0, 255]
+        red_overlay[highlight_mask > 0] = [0, 0, 255]
         image = cv2.addWeighted(red_overlay, 0.65, image, 0.35, 0)
 
-        contours, _ = cv2.findContours(self.fail_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        min_area = max(8, int(self.fail_mask.shape[0] * self.fail_mask.shape[1] * 0.00002))
+        contours, _ = cv2.findContours(highlight_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        min_area = max(8, int(highlight_mask.shape[0] * highlight_mask.shape[1] * 0.00002))
         nok_contours = [contour for contour in contours if cv2.contourArea(contour) >= min_area]
         if nok_contours:
             cv2.drawContours(image, nok_contours, -1, [0, 255, 255], thickness=2)

@@ -176,6 +176,17 @@ class ImageProcessor:
         hist = cv2.calcHist([self.original_image], [0, 1, 2], None, [256, 256, 256],
                             [0, 256, 0, 256, 0, 256])
         return hist
+
+    def get_graphics_viewport_mask(self):
+        """Return a mask covering the main CATIA graphics viewport rows."""
+        if self.original_image is None:
+            raise ValueError("Image not loaded")
+
+        height, width = self.original_image.shape[:2]
+        top, bottom = self._detect_graphics_viewport_rows()
+        mask = np.zeros((height, width), dtype=np.uint8)
+        mask[top:bottom, :] = 255
+        return mask
     
     def _fill_largest_boundary(self, boundary_mask, min_area_ratio=0.005):
         """Fill the largest boundary-like contour if it is large enough."""
@@ -193,6 +204,7 @@ class ImageProcessor:
     def _get_yellow_roi_mask(self):
         """Detect ROI enclosed by CATIA's dashed yellow boundary line."""
         yellow_mask = self.extract_yellow_mask()
+        yellow_mask = self._remove_window_chrome_from_yellow_mask(yellow_mask)
         if np.count_nonzero(yellow_mask) < 25:
             return None
 
@@ -201,6 +213,10 @@ class ImageProcessor:
         dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         boundary_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_CLOSE, close_kernel, iterations=2)
         boundary_mask = cv2.dilate(boundary_mask, dilate_kernel, iterations=1)
+
+        roi_mask = self._fill_yellow_hull(boundary_mask)
+        if roi_mask is not None:
+            return roi_mask
 
         roi_mask = self._fill_best_yellow_component(boundary_mask)
         if roi_mask is not None:
@@ -216,6 +232,67 @@ class ImageProcessor:
         hull_area = cv2.contourArea(hull)
         image_area = boundary_mask.shape[0] * boundary_mask.shape[1]
         if hull_area < image_area * 0.005:
+            return None
+
+        mask = np.zeros_like(boundary_mask)
+        cv2.drawContours(mask, [hull], -1, 255, thickness=-1)
+        return mask
+
+    def _remove_window_chrome_from_yellow_mask(self, yellow_mask):
+        """Remove CATIA toolbar/status yellow icons from full-window captures."""
+        cleaned = yellow_mask.copy()
+        height, width = cleaned.shape[:2]
+        if height < 300 or width < 300:
+            return cleaned
+
+        top, bottom = self._detect_graphics_viewport_rows()
+        cleaned[:top, :] = 0
+        cleaned[bottom:, :] = 0
+        return cleaned
+
+    def _detect_graphics_viewport_rows(self):
+        """Find the main colored CATIA graphics viewport rows."""
+        height, width = self.original_image.shape[:2]
+        hsv = self.hsv_image
+        saturation = hsv[:, :, 1]
+        value = hsv[:, :, 2]
+        color_mask = ((saturation > 45) & (value > 35)).astype(np.uint8)
+        row_ratio = color_mask.mean(axis=1)
+
+        segments = self._segments_over_threshold(row_ratio, threshold=0.18, min_length=max(80, height // 5))
+        if not segments:
+            return 0, height
+
+        top, bottom = max(segments, key=lambda segment: segment[1] - segment[0])
+        return max(0, top - 3), min(height, bottom + 3)
+
+    def _segments_over_threshold(self, values, threshold, min_length):
+        """Return contiguous index ranges where values stay above a threshold."""
+        segments = []
+        start = None
+        for index, value in enumerate(values):
+            if value >= threshold and start is None:
+                start = index
+            elif value < threshold and start is not None:
+                if index - start >= min_length:
+                    segments.append((start, index))
+                start = None
+
+        if start is not None and len(values) - start >= min_length:
+            segments.append((start, len(values)))
+
+        return segments
+
+    def _fill_yellow_hull(self, boundary_mask):
+        """Fill the combined hull of dashed yellow ROI pixels."""
+        points = cv2.findNonZero(boundary_mask)
+        if points is None or len(points) < 20:
+            return None
+
+        hull = cv2.convexHull(points)
+        hull_area = cv2.contourArea(hull)
+        image_area = boundary_mask.shape[0] * boundary_mask.shape[1]
+        if hull_area < image_area * 0.01 or hull_area > image_area * 0.75:
             return None
 
         mask = np.zeros_like(boundary_mask)

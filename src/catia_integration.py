@@ -7,11 +7,15 @@ from the image-analysis engine so the checker can still run from CLI/web modes.
 from __future__ import annotations
 
 import ctypes
+import time
 from dataclasses import dataclass
 from typing import Iterable
 
 import cv2
 import numpy as np
+
+CAPTUREBLT = 0x40000000
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
 
 
 class CatiaIntegrationError(RuntimeError):
@@ -26,6 +30,56 @@ class CatiaWindowCapture:
     window_title: str
     width: int
     height: int
+
+
+_dpi_awareness_attempted = False
+
+
+def ensure_process_dpi_aware():
+    """Call once before any HWND is created (e.g. before tk.Tk).
+
+    Without this, GetWindowRect can report logical sizes that do not match
+    physical screen pixels on scaled displays, and BitBlt captures only the
+    top-left portion of the window.
+    """
+    global _dpi_awareness_attempted
+    if _dpi_awareness_attempted:
+        return
+    _dpi_awareness_attempted = True
+    try:
+        # PROCESS_PER_MONITOR_DPI_AWARE
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except (AttributeError, OSError):
+            pass
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+def _get_window_pixel_bounds(hwnd: int, win32gui) -> tuple[int, int, int, int]:
+    """Physical outer bounds for BitBlt / PrintWindow (handles high-DPI scaling)."""
+    rect = _RECT()
+    try:
+        hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            ctypes.byref(rect),
+            ctypes.sizeof(rect),
+        )
+        if hr == 0 and rect.right > rect.left and rect.bottom > rect.top:
+            return rect.left, rect.top, rect.right, rect.bottom
+    except (AttributeError, OSError):
+        pass
+    return win32gui.GetWindowRect(hwnd)
 
 
 def get_running_catia():
@@ -207,47 +261,180 @@ def capture_active_catia_window() -> CatiaWindowCapture:
     if win32gui.IsIconic(hwnd):
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
 
-    try:
-        win32gui.SetForegroundWindow(hwnd)
-    except Exception:
-        # Windows may block focus changes; capture can still succeed.
-        pass
+    _bring_window_to_front(hwnd, win32con, win32gui)
 
-    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    left, top, right, bottom = _get_window_pixel_bounds(hwnd, win32gui)
     width = right - left
     height = bottom - top
     if width <= 0 or height <= 0:
         raise CatiaIntegrationError("CATIA window has no capturable area.")
 
+    image = _capture_visible_window_from_screen(left, top, width, height, win32con, win32gui, win32ui)
+    if _is_probably_blank_catia_viewport(image):
+        image = _capture_window_with_printwindow(hwnd, width, height, win32con, win32gui, win32ui)
+
+    ok, buffer = cv2.imencode(".png", image)
+    if not ok:
+        raise CatiaIntegrationError("Could not encode CATIA capture as PNG.")
+
+    return CatiaWindowCapture(
+        png_bytes=buffer.tobytes(),
+        window_title=win32gui.GetWindowText(hwnd) or "CATIA",
+        width=width,
+        height=height,
+    )
+
+
+def _bring_window_to_front(hwnd, win32con, win32gui):
+    """Make CATIA visible before screen capture."""
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+    else:
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+
+    try:
+        win32gui.BringWindowToTop(hwnd)
+        win32gui.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+    try:
+        win32gui.SetWindowPos(
+            hwnd,
+            win32con.HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW,
+        )
+        win32gui.SetWindowPos(
+            hwnd,
+            win32con.HWND_NOTOPMOST,
+            0,
+            0,
+            0,
+            0,
+            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW,
+        )
+    except Exception:
+        pass
+
+    time.sleep(0.45)
+
+
+def _capture_window_with_printwindow(hwnd, width, height, win32con, win32gui, win32ui):
+    """Capture a window using PrintWindow."""
     hwnd_dc = win32gui.GetWindowDC(hwnd)
     src_dc = win32ui.CreateDCFromHandle(hwnd_dc)
     mem_dc = src_dc.CreateCompatibleDC()
     bitmap = win32ui.CreateBitmap()
     bitmap.CreateCompatibleBitmap(src_dc, width, height)
     mem_dc.SelectObject(bitmap)
-
     try:
         printed = ctypes.windll.user32.PrintWindow(hwnd, mem_dc.GetSafeHdc(), 2)
         if not printed:
             mem_dc.BitBlt((0, 0), (width, height), src_dc, (0, 0), win32con.SRCCOPY)
 
-        bmpinfo = bitmap.GetInfo()
-        bmpstr = bitmap.GetBitmapBits(True)
-        image = np.frombuffer(bmpstr, dtype=np.uint8)
-        image.shape = (bmpinfo["bmHeight"], bmpinfo["bmWidth"], 4)
-        bgr = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
-        ok, buffer = cv2.imencode(".png", bgr)
-        if not ok:
-            raise CatiaIntegrationError("Could not encode CATIA capture as PNG.")
-
-        return CatiaWindowCapture(
-            png_bytes=buffer.tobytes(),
-            window_title=win32gui.GetWindowText(hwnd) or "CATIA",
-            width=width,
-            height=height,
-        )
+        return _bitmap_to_bgr(bitmap)
     finally:
         win32gui.DeleteObject(bitmap.GetHandle())
         mem_dc.DeleteDC()
         src_dc.DeleteDC()
         win32gui.ReleaseDC(hwnd, hwnd_dc)
+
+
+def _capture_visible_window_from_screen(left, top, width, height, win32con, win32gui, win32ui):
+    """Capture visible screen pixels for OpenGL viewports that PrintWindow misses."""
+    screen_dc_handle = win32gui.GetDC(0)
+    screen_dc = win32ui.CreateDCFromHandle(screen_dc_handle)
+    mem_dc = screen_dc.CreateCompatibleDC()
+    bitmap = win32ui.CreateBitmap()
+    bitmap.CreateCompatibleBitmap(screen_dc, width, height)
+    mem_dc.SelectObject(bitmap)
+
+    try:
+        mem_dc.BitBlt((0, 0), (width, height), screen_dc, (left, top), win32con.SRCCOPY | CAPTUREBLT)
+        return _bitmap_to_bgr(bitmap)
+    finally:
+        win32gui.DeleteObject(bitmap.GetHandle())
+        mem_dc.DeleteDC()
+        screen_dc.DeleteDC()
+        win32gui.ReleaseDC(0, screen_dc_handle)
+
+
+def _bitmap_to_bgr(bitmap):
+    """Convert a Win32 bitmap to an OpenCV BGR image."""
+    bmpinfo = bitmap.GetInfo()
+    bmpstr = bitmap.GetBitmapBits(True)
+    image = np.frombuffer(bmpstr, dtype=np.uint8)
+    image.shape = (bmpinfo["bmHeight"], bmpinfo["bmWidth"], 4)
+    return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+
+
+def _is_probably_blank_catia_viewport(image):
+    """Detect PrintWindow captures where CATIA's OpenGL viewport is missing."""
+    height, width = image.shape[:2]
+    viewport = image[int(height * 0.18):int(height * 0.90), int(width * 0.06):int(width * 0.94)]
+    if viewport.size == 0:
+        return False
+
+    hsv = cv2.cvtColor(viewport, cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+    saturated_ratio = np.count_nonzero((saturation > 45) & (value > 35)) / saturation.size
+    return saturated_ratio < 0.03
+
+
+def _crop_catia_graphics_viewport(image):
+    """Crop a full CATIA window capture down to the graphics viewport."""
+    height, width = image.shape[:2]
+    if height < 300 or width < 300:
+        return image
+
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+
+    color_mask = ((saturation > 45) & (value > 35)).astype(np.uint8)
+    row_ratio = color_mask.mean(axis=1)
+    row_segments = _segments_over_threshold(row_ratio, threshold=0.18, min_length=max(80, height // 5))
+    if not row_segments:
+        return image
+
+    top, bottom = max(row_segments, key=lambda segment: segment[1] - segment[0])
+
+    col_ratio = color_mask[top:bottom].mean(axis=0)
+    col_segments = _segments_over_threshold(col_ratio, threshold=0.12, min_length=max(120, width // 4))
+    if col_segments:
+        left, right = max(col_segments, key=lambda segment: segment[1] - segment[0])
+    else:
+        left, right = 0, width
+
+    top = max(0, top - 3)
+    bottom = min(height, bottom + 3)
+    left = max(0, left - 3)
+    right = min(width, right + 3)
+
+    cropped = image[top:bottom, left:right]
+    if cropped.shape[0] < height * 0.25 or cropped.shape[1] < width * 0.25:
+        return image
+    return cropped
+
+
+def _segments_over_threshold(values, threshold, min_length):
+    """Return contiguous index ranges where values stay above a threshold."""
+    segments = []
+    start = None
+    for index, value in enumerate(values):
+        if value >= threshold and start is None:
+            start = index
+        elif value < threshold and start is not None:
+            if index - start >= min_length:
+                segments.append((start, index))
+            start = None
+
+    if start is not None and len(values) - start >= min_length:
+        segments.append((start, len(values)))
+
+    return segments

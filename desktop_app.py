@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -7,12 +8,18 @@ from tkinter import filedialog, messagebox, ttk
 import cv2
 
 from src.analyzer import DraftAnalyzer
-from src.catia_integration import CatiaIntegrationError, capture_active_catia_window, list_visible_windows
+from src.catia_integration import (
+    CatiaIntegrationError,
+    capture_active_catia_window,
+    ensure_process_dpi_aware,
+    list_visible_windows,
+)
 from src.report import Report
 
 
 class DraftAngleDesktopApp(tk.Tk):
     def __init__(self):
+        ensure_process_dpi_aware()
         super().__init__()
         self.title("Draft Angle Checker")
         self.geometry("980x760")
@@ -22,6 +29,7 @@ class DraftAngleDesktopApp(tk.Tk):
         self.source_label = None
         self.overlay_photo = None
         self.overlay_png = None
+        self.overlay_image = None
 
         self._build_ui()
 
@@ -61,33 +69,40 @@ class DraftAngleDesktopApp(tk.Tk):
         self.detail_var = tk.StringVar(value="")
         ttk.Label(root, textvariable=self.detail_var).pack(fill=tk.X)
 
-        body = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
+        body = ttk.Notebook(root)
         body.pack(fill=tk.BOTH, expand=True, pady=(14, 0))
 
         image_frame = ttk.Frame(body)
-        body.add(image_frame, weight=3)
+        body.add(image_frame, text="Analysis")
         ttk.Label(image_frame, text="Analysis Overlay").pack(anchor=tk.W)
         self.image_label = ttk.Label(image_frame, anchor=tk.CENTER)
         self.image_label.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self.image_label.bind("<Configure>", self._resize_overlay_preview)
 
         summary_frame = ttk.Frame(body)
-        body.add(summary_frame, weight=2)
+        body.add(summary_frame, text="Summary")
         ttk.Label(summary_frame, text="Summary").pack(anchor=tk.W)
         self.summary_text = tk.Text(summary_frame, height=12, wrap=tk.WORD)
         self.summary_text.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         self.summary_text.configure(state=tk.DISABLED)
+        body.select(image_frame)
 
     def analyze_catia(self):
         self._set_busy("Capturing CATIA window...")
         self.update_idletasks()
         try:
+            self.withdraw()
+            time.sleep(0.35)
             capture = capture_active_catia_window()
             self.source_label = f"{capture.window_title} ({capture.width}x{capture.height})"
+            self.deiconify()
             self._run_analysis(capture.png_bytes)
         except CatiaIntegrationError as exc:
+            self.deiconify()
             self._set_ready()
             messagebox.showerror("CATIA capture failed", str(exc))
         except Exception as exc:
+            self.deiconify()
             self._set_ready()
             messagebox.showerror("Analysis failed", str(exc))
 
@@ -134,21 +149,27 @@ class DraftAngleDesktopApp(tk.Tk):
         text.insert(tk.END, "\n".join(lines))
         text.configure(state=tk.DISABLED)
 
-    def _run_analysis(self, image_bytes):
-        analyzer = DraftAnalyzer(image_bytes)
+    def _run_analysis(self, image_bytes, use_roi=True, use_graphics_viewport=False):
+        analyzer = DraftAnalyzer(
+            image_bytes,
+            use_roi=use_roi,
+            use_graphics_viewport=use_graphics_viewport,
+        )
         analyzer.analyze()
         threshold = float(self.threshold_var.get())
         self.summary = analyzer.get_analysis_summary(pass_threshold=threshold)
 
         overlay = analyzer.get_overlay_image()
-        self.overlay_png = self._encode_preview_png(overlay)
-        self._show_overlay(self.overlay_png)
+        ok, full_overlay_buffer = cv2.imencode(".png", overlay)
+        if not ok:
+            raise ValueError("Could not render analysis overlay.")
+        self.overlay_png = full_overlay_buffer.tobytes()
+        self.overlay_image = overlay
+        self._resize_overlay_preview()
         self._show_summary()
         self._set_ready()
 
-    def _encode_preview_png(self, image):
-        max_width = 620
-        max_height = 520
+    def _encode_preview_png(self, image, max_width, max_height):
         height, width = image.shape[:2]
         scale = min(max_width / width, max_height / height, 1)
         if scale < 1:
@@ -163,6 +184,15 @@ class DraftAngleDesktopApp(tk.Tk):
         encoded = base64.b64encode(png_bytes).decode("ascii")
         self.overlay_photo = tk.PhotoImage(data=encoded)
         self.image_label.configure(image=self.overlay_photo)
+
+    def _resize_overlay_preview(self, _event=None):
+        if self.overlay_image is None:
+            return
+
+        width = max(self.image_label.winfo_width() - 20, 320)
+        height = max(self.image_label.winfo_height() - 20, 240)
+        preview_png = self._encode_preview_png(self.overlay_image, width, height)
+        self._show_overlay(preview_png)
 
     def _show_summary(self):
         status = self.summary["status"]
@@ -212,6 +242,7 @@ class DraftAngleDesktopApp(tk.Tk):
 
 
 def main():
+    ensure_process_dpi_aware()
     app = DraftAngleDesktopApp()
     app.mainloop()
 
